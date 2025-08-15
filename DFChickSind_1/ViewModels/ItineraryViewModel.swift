@@ -92,6 +92,17 @@ class ItineraryViewModel: ObservableObject {
     }
     
     func updateItinerary(_ itinerary: Itinerary) {
+        // Update in local array
+        if let index = itineraries.firstIndex(where: { $0.id == itinerary.id }) {
+            itineraries[index] = itinerary
+        }
+        
+        // Update current itinerary if it's the same one
+        if currentItinerary?.id == itinerary.id {
+            currentItinerary = itinerary
+        }
+        
+        // Update in the service
         itineraryService.updateItinerary(itinerary)
     }
     
@@ -180,6 +191,47 @@ class ItineraryViewModel: ObservableObject {
         self.updateItinerary(itinerary)
     }
     
+    func createCustomDestination(name: String, description: String, category: JCLocation.LocationCategory = .attraction) -> JCLocation {
+        return JCLocation(
+            name: name,
+            description: description,
+            coordinate: CLLocationCoordinate2D(latitude: 0, longitude: 0), // Default coordinates
+            category: category,
+            rating: 0.0,
+            priceLevel: .free,
+            isEcoFriendly: true,
+            carbonFootprint: 0.0,
+            estimatedVisitDuration: 60,
+            openingHours: [],
+            tags: ["custom"]
+        )
+    }
+    
+    // MARK: - Popular Destinations
+    func getPopularDestinations() -> [JCLocation] {
+        // Return popular destinations for quick adding
+        return [
+            JCLocation(
+                name: "Golden Gate Bridge",
+                description: "Iconic suspension bridge in San Francisco",
+                coordinate: CLLocationCoordinate2D(latitude: 37.8199, longitude: -122.4783),
+                category: .attraction
+            ),
+            JCLocation(
+                name: "Central Park",
+                description: "Large public park in Manhattan, New York City",
+                coordinate: CLLocationCoordinate2D(latitude: 40.7829, longitude: -73.9654),
+                category: .nature
+            ),
+            JCLocation(
+                name: "Louvre Museum",
+                description: "World's largest art museum in Paris",
+                coordinate: CLLocationCoordinate2D(latitude: 48.8606, longitude: 2.3376),
+                category: .museum
+            )
+        ]
+    }
+    
     // MARK: - Helper Methods
     func formatDuration(_ duration: TimeInterval) -> String {
         let hours = Int(duration) / 3600
@@ -247,16 +299,6 @@ class ItineraryViewModel: ObservableObject {
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(3)
             .map { $0 }
-    }
-    
-    func getPopularDestinations() -> [JCLocation] {
-        let allDestinations = itineraries.flatMap { $0.destinations }
-        let destinationCounts = Dictionary(grouping: allDestinations) { $0.id }
-        
-        return destinationCounts
-            .sorted { $0.value.count > $1.value.count }
-            .prefix(5)
-            .compactMap { $0.value.first }
     }
     
     func getStatistics() -> ItineraryStatistics {

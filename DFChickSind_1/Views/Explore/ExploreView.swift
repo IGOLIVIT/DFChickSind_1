@@ -674,6 +674,7 @@ struct EmptyNearbyView: View {
             Button("Enable Location") {
                 onEnableLocation()
             }
+            .buttonStyle(PlainButtonStyle())
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             .background(

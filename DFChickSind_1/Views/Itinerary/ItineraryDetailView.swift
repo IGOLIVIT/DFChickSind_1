@@ -31,8 +31,15 @@ struct ItineraryDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingMap = false
     @State private var showingDeleteAlert = false
+    @State private var showingLocationPicker = false
+    @State private var showingCustomDestinationForm = false
 
     @State private var selectedDestination: JCLocation?
+    
+    // Computed property to get current itinerary state
+    private var currentItinerary: Itinerary {
+        return viewModel.itineraries.first(where: { $0.id == itinerary.id }) ?? itinerary
+    }
     
     var body: some View {
         NavigationView {
@@ -101,6 +108,14 @@ struct ItineraryDetailView: View {
             }
             .sheet(isPresented: $showingMap) {
                 ItineraryMapView(itinerary: itinerary)
+            }
+            .sheet(isPresented: $showingLocationPicker) {
+                LocationPickerView(itinerary: itinerary)
+                    .environmentObject(viewModel)
+            }
+            .sheet(isPresented: $showingCustomDestinationForm) {
+                CustomDestinationFormView(itinerary: itinerary)
+                    .environmentObject(viewModel)
             }
         }
     }
@@ -182,7 +197,7 @@ struct ItineraryDetailView: View {
                 
                 InfoCard(
                     title: "Destinations",
-                    value: "\(itinerary.destinations.count)",
+                    value: "\(currentItinerary.destinations.count)",
                     icon: "star.fill",
                     color: "#ff6b6b"
                 )
@@ -213,22 +228,56 @@ struct ItineraryDetailView: View {
                 .font(.system(size: 14, weight: .medium, design: .rounded))
             }
             
-            if itinerary.destinations.isEmpty {
+            if currentItinerary.destinations.isEmpty {
                 EmptyDestinationsView {
-                    // Add destination action
+                    showingLocationPicker = true
                 }
             } else {
                 LazyVStack(spacing: 12) {
-                    ForEach(Array(itinerary.destinations.enumerated()), id: \.element.id) { index, destination in
+                    ForEach(Array(currentItinerary.destinations.enumerated()), id: \.element.id) { index, destination in
                         DestinationCard(
                             destination: destination,
                             index: index,
                             isFirst: index == 0,
-                            isLast: index == itinerary.destinations.count - 1
+                            isLast: index == currentItinerary.destinations.count - 1,
+                            onDelete: {
+                                removeDestination(at: index)
+                            }
                         ) {
                             selectedDestination = destination
                         }
                     }
+                }
+                
+                // Add new destination buttons
+                VStack(spacing: 12) {
+                    Button("Add from Popular") {
+                        showingLocationPicker = true
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 15)
+                            .fill(Material.ultraThinMaterial)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 15)
+                                    .stroke(.white.opacity(0.2), lineWidth: 1)
+                            )
+                    )
+                    .foregroundColor(Color(hex: "#fcc418"))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    
+                    Button("Create Custom Destination") {
+                        showingCustomDestinationForm = true
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 15)
+                            .fill(Color(hex: "#3cc45b").opacity(0.8))
+                    )
+                    .foregroundColor(.white)
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
                 }
             }
         }
@@ -379,6 +428,10 @@ struct ItineraryDetailView: View {
             rootVC.present(activityVC, animated: true)
         }
     }
+    
+    private func removeDestination(at index: Int) {
+        viewModel.removeDestinationFromCurrentItinerary(at: index)
+    }
 }
 
 struct InfoCard: View {
@@ -419,6 +472,7 @@ struct DestinationCard: View {
     let index: Int
     let isFirst: Bool
     let isLast: Bool
+    let onDelete: () -> Void
     let action: () -> Void
     
     var body: some View {
@@ -464,14 +518,25 @@ struct DestinationCard: View {
                     Spacer()
                     
                     // Rating
-                    HStack(spacing: 2) {
-                        Image(systemName: "star.fill")
-                            .foregroundColor(Color(hex: "#fcc418"))
-                            .font(.system(size: 12))
+                    HStack(spacing: 8) {
+                        // Rating
+                        HStack(spacing: 2) {
+                            Image(systemName: "star.fill")
+                                .foregroundColor(Color(hex: "#fcc418"))
+                                .font(.system(size: 12))
+                            
+                            Text(String(format: "%.1f", destination.rating))
+                                .font(.system(size: 12, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.8))
+                        }
                         
-                        Text(String(format: "%.1f", destination.rating))
-                            .font(.system(size: 12, weight: .medium, design: .rounded))
-                            .foregroundColor(.white.opacity(0.8))
+                        // Delete button
+                        Button(action: onDelete) {
+                            Image(systemName: "trash")
+                                .foregroundColor(.red)
+                                .font(.system(size: 14))
+                        }
+                        .buttonStyle(PlainButtonStyle())
                     }
                 }
                 
@@ -521,6 +586,7 @@ struct EmptyDestinationsView: View {
             Button("Add Destination") {
                 addAction()
             }
+            .buttonStyle(PlainButtonStyle())
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
             .background(
@@ -647,6 +713,342 @@ struct ItineraryMapView: View {
                 }
             }
         }
+    }
+}
+
+struct CustomDestinationFormView: View {
+    let itinerary: Itinerary
+    @EnvironmentObject private var viewModel: ItineraryViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    @State private var name = ""
+    @State private var description = ""
+    @State private var selectedCategory: JCLocation.LocationCategory = .attraction
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                // Background
+                LinearGradient(
+                    colors: [
+                        Color(hex: "#3e4464"),
+                        Color(hex: "#3e4464").opacity(0.8)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 24) {
+                        VStack(spacing: 12) {
+                            Text("Create Custom Destination")
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                            
+                            Text("Add your own destination to the itinerary")
+                                .font(.system(size: 16, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                        .padding(.top, 20)
+                        
+                        VStack(spacing: 20) {
+                            // Name field
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Destination Name")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                
+                                TextField("Enter destination name", text: $name)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .font(.system(size: 16, design: .rounded))
+                            }
+                            
+                            // Description field
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Description")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                
+                                TextField("Enter description", text: $description)
+                                    .lineLimit(3)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .font(.system(size: 16, design: .rounded))
+                            }
+                            
+                            // Category picker
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Category")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white)
+                                
+                                Menu {
+                                    ForEach(JCLocation.LocationCategory.allCases, id: \.self) { category in
+                                        Button(action: {
+                                            selectedCategory = category
+                                        }) {
+                                            HStack {
+                                                Text(getCategoryDisplayName(category))
+                                                Spacer()
+                                                if selectedCategory == category {
+                                                    Image(systemName: "checkmark")
+                                                        .foregroundColor(Color(hex: "#fcc418"))
+                                                }
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text(getCategoryDisplayName(selectedCategory))
+                                            .font(.system(size: 16, design: .rounded))
+                                            .foregroundColor(.white)
+                                        Spacer()
+                                        Image(systemName: "chevron.down")
+                                            .foregroundColor(.white.opacity(0.7))
+                                            .font(.system(size: 14))
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(Color.white.opacity(0.1))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 12)
+                                                    .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                                            )
+                                    )
+                                }
+                            }
+                            
+                            // Create button
+                            Button("Create Destination") {
+                                createDestination()
+                            }
+                            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 25)
+                                    .fill(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 
+                                          Color.gray.opacity(0.5) : 
+                                          Color(hex: "#3cc45b"))
+                            )
+                            .foregroundColor(.white)
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .padding(.top, 20)
+                        }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 20)
+                                .fill(Material.ultraThinMaterial)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 20)
+                                        .stroke(.white.opacity(0.2), lineWidth: 1)
+                                )
+                        )
+                        
+                        Spacer(minLength: 40)
+                    }
+                    .padding()
+                }
+            }
+            .navigationTitle("Custom Destination")
+            .navigationBarTitleDisplayMode(.large)
+            .navigationBarBackButtonHidden(true)
+            .navigationBarItems(
+                leading: Button("Cancel") {
+                    dismiss()
+                }
+                .foregroundColor(.white),
+                trailing: Button("Save") {
+                    let newDestination = viewModel.createCustomDestination(
+                        name: name,
+                        description: description,
+                        category: selectedCategory
+                    )
+                    viewModel.addDestinationToCurrentItinerary(newDestination)
+                    dismiss()
+                }
+                .disabled(name.isEmpty)
+                .foregroundColor(name.isEmpty ? .gray : Color(hex: "#fcc418"))
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+            )
+        }
+    }
+    
+    private func getCategoryDisplayName(_ category: JCLocation.LocationCategory) -> String {
+        switch category {
+        case .attraction:
+            return "🎯 Attraction"
+        case .restaurant:
+            return "🍽️ Restaurant"
+        case .museum:
+            return "🏛️ Museum"
+        case .nature:
+            return "🌲 Nature"
+        case .hotel:
+            return "🏨 Hotel"
+        case .shopping:
+            return "🛍️ Shopping"
+        case .entertainment:
+            return "🎭 Entertainment"
+        case .transport:
+            return "🚗 Transport"
+        case .wellness:
+            return "💆 Wellness"
+        case .outdoor:
+            return "🏞️ Outdoor"
+        }
+    }
+    
+    private func createDestination() {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        guard !trimmedName.isEmpty else { return }
+        
+        let customDestination = viewModel.createCustomDestination(
+            name: trimmedName,
+            description: trimmedDescription.isEmpty ? "Custom destination" : trimmedDescription,
+            category: selectedCategory
+        )
+        
+        viewModel.addDestinationToCurrentItinerary(customDestination)
+        dismiss()
+    }
+}
+
+// MARK: - Location Picker View
+struct LocationPickerView: View {
+    let itinerary: Itinerary
+    @EnvironmentObject private var viewModel: ItineraryViewModel
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationView {
+            ZStack {
+                // Background
+                LinearGradient(
+                    colors: [
+                        Color(hex: "#3e4464"),
+                        Color(hex: "#3e4464").opacity(0.8)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+                
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Header
+                        VStack(spacing: 12) {
+                            Text("Add Destination")
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .foregroundColor(.white)
+                            
+                            Text("Choose from popular destinations")
+                                .font(.system(size: 16, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.8))
+                        }
+                        .padding(.top, 20)
+                        
+                        // Popular destinations
+                        LazyVStack(spacing: 12) {
+                            ForEach(viewModel.getPopularDestinations()) { location in
+                                DestinationPickerCard(location: location) {
+                                    addDestination(location)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 20)
+                    }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
+                }
+            }
+        }
+    }
+    
+    private func addDestination(_ location: JCLocation) {
+        // Set this itinerary as current if it's not already
+        if viewModel.currentItinerary?.id != itinerary.id {
+            viewModel.selectItinerary(itinerary)
+        }
+        
+        // Add the location
+        viewModel.addDestinationToCurrentItinerary(location)
+        dismiss()
+    }
+}
+
+struct DestinationPickerCard: View {
+    let location: JCLocation
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                // Location icon
+                ZStack {
+                    Circle()
+                        .fill(Color(hex: location.category.color))
+                        .frame(width: 50, height: 50)
+                    
+                    Image(systemName: location.category.icon)
+                        .foregroundColor(.white)
+                        .font(.system(size: 20, weight: .medium))
+                }
+                
+                // Location info
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(location.name)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                    
+                    Text(location.category.rawValue)
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.7))
+                    
+                    HStack {
+                        Image(systemName: "star.fill")
+                            .foregroundColor(Color(hex: "#fcc418"))
+                            .font(.system(size: 12))
+                        
+                        Text(String(format: "%.1f", location.rating))
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.8))
+                        
+                        Text("• \(location.priceLevel.rawValue)")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                }
+                
+                Spacer()
+                
+                // Add button
+                Image(systemName: "plus.circle.fill")
+                    .foregroundColor(Color(hex: "#3cc45b"))
+                    .font(.system(size: 24))
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 15)
+                    .fill(Material.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 15)
+                            .stroke(.white.opacity(0.2), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

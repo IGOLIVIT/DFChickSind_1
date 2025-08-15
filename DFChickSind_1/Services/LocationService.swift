@@ -32,14 +32,29 @@ class LocationService: NSObject, ObservableObject {
     }
     
     func requestLocationPermission() {
-        switch authorizationStatus {
+        print("🔍 LocationService: requestLocationPermission called with status: \(authorizationStatus.rawValue)")
+        
+        // Ensure we have fresh status
+        let currentStatus = locationManager.authorizationStatus
+        authorizationStatus = currentStatus
+        print("🔄 Updated status check: \(currentStatus.rawValue)")
+        
+        switch currentStatus {
         case .notDetermined:
-            locationManager.requestWhenInUseAuthorization()
+            print("📍 LocationService: Requesting authorization...")
+            DispatchQueue.main.async {
+                self.locationManager.requestWhenInUseAuthorization()
+                print("📱 Authorization request sent on main queue")
+            }
         case .denied, .restricted:
+            print("❌ LocationService: Permission denied/restricted, opening settings...")
             locationPermissionDenied = true
+            openLocationSettings()
         case .authorizedWhenInUse, .authorizedAlways:
+            print("✅ LocationService: Already authorized, starting updates...")
             startLocationUpdates()
         @unknown default:
+            print("⚠️ LocationService: Unknown authorization status")
             break
         }
     }
@@ -113,19 +128,24 @@ extension LocationService: CLLocationManagerDelegate {
     }
     
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        print("🔄 LocationService: Authorization changed to: \(status.rawValue)")
         authorizationStatus = status
         updateLocationEnabled()
         
         switch status {
         case .authorizedWhenInUse, .authorizedAlways:
+            print("✅ LocationService: Permission granted!")
             locationPermissionDenied = false
             startLocationUpdates()
         case .denied, .restricted:
+            print("❌ LocationService: Permission denied in delegate!")
             locationPermissionDenied = true
             stopLocationUpdates()
         case .notDetermined:
+            print("❓ LocationService: Permission not determined")
             locationPermissionDenied = false
         @unknown default:
+            print("⚠️ LocationService: Unknown status in delegate")
             break
         }
     }

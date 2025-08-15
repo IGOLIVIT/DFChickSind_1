@@ -9,6 +9,7 @@ import SwiftUI
 
 struct OnboardingView: View {
     @EnvironmentObject private var userPreferences: UserPreferences
+    @EnvironmentObject private var locationService: LocationService
     @State private var currentPage = 0
     @State private var showingPermissions = false
     
@@ -99,6 +100,7 @@ struct OnboardingView: View {
         .sheet(isPresented: $showingPermissions) {
             PermissionsView()
                 .environmentObject(userPreferences)
+                .environmentObject(locationService)
         }
     }
 }
@@ -129,7 +131,7 @@ struct OnboardingPage {
             imageName: "list.bullet.circle.fill",
             primaryColor: "#3cc45b",
             secondaryColor: "#fcc418",
-            features: ["AI-powered recommendations", "Customizable preferences", "Optimized routes", "Time management"]
+            features: ["Smart recommendations", "Customizable preferences", "Optimized routes", "Time management"]
         ),
         OnboardingPage(
             title: "Intelligent",
@@ -147,7 +149,7 @@ struct OnboardingPage {
             imageName: "star.circle.fill",
             primaryColor: "#ff6b6b",
             secondaryColor: "#3cc45b",
-            features: ["Hidden local gems", "Community recommendations", "Cultural experiences", "Authentic discoveries"]
+            features: ["Hidden local gems", "Location-based search", "Cultural experiences", "Authentic discoveries"]
         ),
         OnboardingPage(
             title: "Green Travel",
@@ -164,6 +166,7 @@ struct OnboardingPage {
 #Preview {
     OnboardingView()
         .environmentObject(UserPreferences())
+        .environmentObject(LocationService())
 }
 
 

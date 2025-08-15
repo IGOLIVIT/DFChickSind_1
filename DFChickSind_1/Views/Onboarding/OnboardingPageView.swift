@@ -13,11 +13,13 @@ struct OnboardingPageView: View {
     @State private var isAnimating = false
     
     var body: some View {
-        VStack(spacing: 30) {
-            Spacer()
-            
-            // Icon with glassmorphism effect
-            ZStack {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 30) {
+                    Spacer(minLength: max(20, (geometry.size.height - 600) / 4))
+                    
+                    // Icon with glassmorphism effect
+                    ZStack {
                 // Background blur effect
                 Circle()
                     .fill(Material.ultraThinMaterial)
@@ -91,25 +93,28 @@ struct OnboardingPageView: View {
                 .offset(y: isAnimating ? 0 : 30)
                 .animation(.easeOut(duration: 0.8).delay(0.4), value: isAnimating)
             
-            Spacer()
-            
-            // Features list
-            VStack(spacing: 16) {
-                ForEach(Array(page.features.enumerated()), id: \.offset) { index, feature in
-                    FeatureRow(
-                        text: feature,
-                        primaryColor: page.primaryColor,
-                        secondaryColor: page.secondaryColor,
-                        delay: Double(index) * 0.1
-                    )
-                    .opacity(isAnimating ? 1.0 : 0.0)
-                    .offset(x: isAnimating ? 0 : -50)
-                    .animation(.easeOut(duration: 0.6).delay(0.6 + Double(index) * 0.1), value: isAnimating)
+                    Spacer(minLength: 20)
+                    
+                    // Features list
+                    VStack(spacing: 16) {
+                        ForEach(Array(page.features.enumerated()), id: \.offset) { index, feature in
+                            FeatureRow(
+                                text: feature,
+                                primaryColor: page.primaryColor,
+                                secondaryColor: page.secondaryColor,
+                                delay: Double(index) * 0.1
+                            )
+                            .opacity(isAnimating ? 1.0 : 0.0)
+                            .offset(x: isAnimating ? 0 : -50)
+                            .animation(.easeOut(duration: 0.6).delay(0.6 + Double(index) * 0.1), value: isAnimating)
+                        }
+                    }
+                    .padding(.horizontal, 30)
+                    
+                    Spacer(minLength: max(40, (geometry.size.height - 600) / 4))
                 }
+                .frame(minHeight: geometry.size.height)
             }
-            .padding(.horizontal, 30)
-            
-            Spacer()
         }
         .onAppear {
             isAnimating = true
@@ -205,8 +210,17 @@ struct PermissionsView: View {
                             primaryColor: "#3cc45b",
                             isGranted: locationService.isLocationEnabled,
                             action: {
+                                print("🔘 OnboardingPageView: Location Allow button tapped")
+                                print("📍 Current authorization status: \(locationService.authorizationStatus.rawValue)")
                                 locationPermissionRequested = true
-                                locationService.requestLocationPermission()
+                                if locationService.authorizationStatus == .denied {
+                                    print("🏠 Redirecting to settings due to denied status")
+                                    // If previously denied, direct to settings
+                                    locationService.openLocationSettings()
+                                } else {
+                                    print("🔄 Requesting location permission...")
+                                    locationService.requestLocationPermission()
+                                }
                             }
                         )
                         
@@ -218,7 +232,7 @@ struct PermissionsView: View {
                             isGranted: userPreferences.notificationsEnabled,
                             action: {
                                 notificationPermissionRequested = true
-                                requestNotificationPermission()
+                                checkAndRequestNotificationPermission()
                             }
                         )
                     }
@@ -253,11 +267,37 @@ struct PermissionsView: View {
         }
     }
     
+    private func checkAndRequestNotificationPermission() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                switch settings.authorizationStatus {
+                case .denied:
+                    // If previously denied, direct to settings
+                    self.openAppSettings()
+                case .notDetermined:
+                    // First time, show system dialog
+                    self.requestNotificationPermission()
+                case .authorized, .provisional, .ephemeral:
+                    // Already granted
+                    userPreferences.notificationsEnabled = true
+                @unknown default:
+                    self.requestNotificationPermission()
+                }
+            }
+        }
+    }
+    
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
             DispatchQueue.main.async {
                 userPreferences.notificationsEnabled = granted
             }
+        }
+    }
+    
+    private func openAppSettings() {
+        if let settingsUrl = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(settingsUrl)
         }
     }
     
@@ -327,21 +367,24 @@ struct PermissionCard: View {
                 
                 // Action button
                 if !isGranted {
-                    Button("Allow") {
+                    Button(action: {
                         action()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 20)
-                            .fill(Color(hex: primaryColor).opacity(0.2))
-                            .overlay(
+                    }) {
+                        Text("Allow")
+                            .font(.system(size: 16, weight: .medium, design: .rounded))
+                            .foregroundColor(Color(hex: primaryColor))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(
                                 RoundedRectangle(cornerRadius: 20)
-                                    .stroke(Color(hex: primaryColor), lineWidth: 1)
+                                    .fill(Color(hex: primaryColor).opacity(0.2))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 20)
+                                            .stroke(Color(hex: primaryColor), lineWidth: 1)
+                                    )
                             )
-                    )
-                    .foregroundColor(Color(hex: primaryColor))
-                    .font(.system(size: 16, weight: .medium, design: .rounded))
+                    }
+                    .buttonStyle(PlainButtonStyle())
                 }
             }
             .padding(20)
