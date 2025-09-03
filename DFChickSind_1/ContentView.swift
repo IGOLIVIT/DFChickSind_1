@@ -6,137 +6,267 @@
 //
 
 import SwiftUI
+import UserNotifications
+import Combine
 
 struct ContentView: View {
-    @EnvironmentObject private var userPreferences: UserPreferences
-    @EnvironmentObject private var locationService: LocationService
-    @StateObject private var itineraryService: ItineraryService
-    @StateObject private var navigationService: NavigationService
-    @StateObject private var itineraryViewModel: ItineraryViewModel
-    @StateObject private var navigationViewModel: NavigationViewModel
+    @StateObject private var appState = AppState()
+    @StateObject private var appsFlyerService = AppsFlyerService.shared
+    @StateObject private var configService = ConfigService.shared
     
-    init() {
-        let locationSvc = LocationService()
-        let navigationSvc = NavigationService(locationService: locationSvc)
-        let itinerarySvc = ItineraryService()
-        
-        _itineraryService = StateObject(wrappedValue: itinerarySvc)
-        _navigationService = StateObject(wrappedValue: navigationSvc)
-        _itineraryViewModel = StateObject(wrappedValue: ItineraryViewModel(itineraryService: itinerarySvc, locationService: locationSvc))
-        _navigationViewModel = StateObject(wrappedValue: NavigationViewModel(navigationService: navigationSvc, locationService: locationSvc))
-    }
+    @State private var showNotificationPermission = false
+    @State private var isInitializing = true
+    @State private var initializationError: String?
+    @State private var cancellables = Set<AnyCancellable>()
     
     var body: some View {
-        Group {
-            if userPreferences.hasCompletedOnboarding {
-                MainTabViewWrapper()
-                    .environmentObject(itineraryService)
-                    .environmentObject(navigationService)
-                    .environmentObject(itineraryViewModel)
-                    .environmentObject(navigationViewModel)
+        ZStack {
+            mainContent
+            
+            if showNotificationPermission {
+                NotificationPermissionView(
+                    onPermissionGranted: {
+                        handleNotificationPermissionGranted()
+                    },
+                    onPermissionSkipped: {
+                        handleNotificationPermissionSkipped()
+                    }
+                )
+                .environmentObject(appState)
+                .transition(.opacity)
+                .zIndex(1)
+            }
+        }
+        .environmentObject(appState)
+        .onAppear {
+            // Устанавливаем ссылку на AppState для PushNotificationService
+            PushNotificationService.shared.appState = appState
+            initializeApp()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            handleAppDidBecomeActive()
+        }
+        .alert(isPresented: .constant(initializationError != nil)) {
+            Alert(
+                title: Text("Initialization Error"),
+                message: Text(initializationError ?? ""),
+                dismissButton: .default(Text("Retry")) {
+                    initializeApp()
+                }
+            )
+        }
+    }
+    
+    @ViewBuilder
+    private var mainContent: some View {
+        switch appState.appMode {
+        case .undefined:
+            if isInitializing {
+                LoadingView()
             } else {
-                OnboardingView()
+                ErrorView(
+                    title: "Error",
+                    message: "Error while getting app state",
+                    buttonTitle: "Retry"
+                ) {
+                    initializeApp()
+                }
+            }
+            
+        case .webView:
+            WebViewScreen()
+                .environmentObject(appState)
+            
+        case .game:
+            ZaglushkaView()
+        }
+    }
+    
+    private func initializeApp() {
+        print("🚀 ===== APP INITIALIZATION STARTED =====")
+        print("⏰ Init Time: \(Date())")
+        print("📱 Current App Mode: \(appState.appMode.rawValue)")
+        print("🔄 Is First Launch: \(appState.isFirstLaunch)")
+        
+        isInitializing = true
+        initializationError = nil
+        
+        // Проверяем конфигурацию проекта и SDK
+        DataManager.printFullStatus()
+        
+        print("🔐 Requesting tracking permission...")
+        appsFlyerService.requestTrackingPermission { granted in
+            print("🔐 Tracking permission result: \(granted ? "granted" : "denied")")
+            print("🚀 Initializing AppsFlyer SDK...")
+            appsFlyerService.initializeAppsFlyer()
+            
+            print("📊 Setting conversion data callback...")
+            appsFlyerService.setConversionDataCallback { conversionData in
+                print("📊 Conversion data callback triggered!")
+                self.handleConversionData(conversionData)
             }
         }
-        .onAppear {
-            userPreferences.loadPreferences()
-        }
-    }
-}
-
-struct MainTabView: View {
-    @EnvironmentObject private var userPreferences: UserPreferences
-    @EnvironmentObject private var itineraryViewModel: ItineraryViewModel
-    @EnvironmentObject private var navigationViewModel: NavigationViewModel
-    @EnvironmentObject private var exploreViewModel: ExploreViewModel
-    
-    var body: some View {
-        TabView {
-            // Itinerary Tab
-            ItineraryView()
-                .tabItem {
-                    Image(systemName: "list.bullet.circle")
-                    Text("Itinerary")
-                }
-                .environmentObject(itineraryViewModel)
-            
-            // Explore Tab
-            ExploreView()
-                .tabItem {
-                    Image(systemName: "star.circle")
-                    Text("Explore")
-                }
-                .environmentObject(exploreViewModel)
-                .environmentObject(itineraryViewModel)
-            
-            // Navigation Tab
-            NavigationAlertsView()
-                .tabItem {
-                    Image(systemName: "bell.circle")
-                    Text("Alerts")
-                }
-                .environmentObject(navigationViewModel)
-            
-            // Map Tab
-            NavigationMapView()
-                .tabItem {
-                    Image(systemName: "map.circle")
-                    Text("Map")
-                }
-                .environmentObject(navigationViewModel)
-        }
-        .accentColor(Color(hex: "#fcc418"))
-        .onAppear {
-            setupTabBarAppearance()
-        }
+        print("==========================================")
     }
     
-    private func setupTabBarAppearance() {
-        let appearance = UITabBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = UIColor(Color(hex: "#3e4464"))
+    private func handleConversionData(_ conversionData: [String: Any]) {
+        appState.saveConversionData(conversionData)
         
-        // Normal state
-        appearance.stackedLayoutAppearance.normal.iconColor = UIColor.white.withAlphaComponent(0.6)
-        appearance.stackedLayoutAppearance.normal.titleTextAttributes = [
-            .foregroundColor: UIColor.white.withAlphaComponent(0.6),
-            .font: UIFont.systemFont(ofSize: 10, weight: .medium)
-        ]
+        if let appsflyerID = appsFlyerService.getAppsFlyerUID() {
+            appState.saveAppsFlyerID(appsflyerID)
+        }
         
-        // Selected state
-        appearance.stackedLayoutAppearance.selected.iconColor = UIColor(Color(hex: "#fcc418"))
-        appearance.stackedLayoutAppearance.selected.titleTextAttributes = [
-            .foregroundColor: UIColor(Color(hex: "#fcc418")),
-            .font: UIFont.systemFont(ofSize: 10, weight: .semibold)
-        ]
-        
-        UITabBar.appearance().standardAppearance = appearance
-        UITabBar.appearance().scrollEdgeAppearance = appearance
-    }
-}
-
-struct MainTabViewWrapper: View {
-    @EnvironmentObject private var userPreferences: UserPreferences
-    @EnvironmentObject private var locationService: LocationService
-    @StateObject private var exploreViewModel: ExploreViewModel
-    
-    init() {
-        // Temporary initialization - will be updated in onAppear
-        _exploreViewModel = StateObject(wrappedValue: ExploreViewModel(locationService: LocationService(), userPreferences: UserPreferences()))
-    }
-    
-    var body: some View {
-        MainTabView()
-            .environmentObject(exploreViewModel)
-            .onAppear {
-                // Update ExploreViewModel with proper dependencies
-                exploreViewModel.updateDependencies(locationService: locationService, userPreferences: userPreferences)
+        if configService.shouldRecheckConversion(conversionData: conversionData) {
+            configService.recheckConversionData(appsflyerID: appState.appsflyerID ?? "") { result in
+                switch result {
+                case .success(let newData):
+                    self.processConversionData(newData)
+                case .failure:
+                    self.processConversionData(conversionData)
+                }
             }
+        } else {
+            processConversionData(conversionData)
+        }
     }
-}
-
-#Preview {
-    ContentView()
-        .environmentObject(UserPreferences())
-        .environmentObject(LocationService())
+    
+    private func processConversionData(_ conversionData: [String: Any]) {
+        if !appState.isFirstLaunch && appState.appMode != .undefined {
+            isInitializing = false
+            handleAppModeSet()
+            return
+        }
+        
+        guard configService.isConnected else {
+            handleNoInternetConnection()
+            return
+        }
+        
+        // Начинаем ожидать push токен
+        appState.startWaitingForPushToken()
+        
+        // Ждем готовности push токена
+        waitForPushTokenAndFetchConfig(conversionData: conversionData)
+    }
+    
+    private func waitForPushTokenAndFetchConfig(conversionData: [String: Any]) {
+        // Если токен уже готов, сразу отправляем запрос
+        if appState.isPushTokenReady {
+            sendConfigRequest(conversionData: conversionData)
+            return
+        }
+        
+        // Иначе ждем изменения состояния
+        appState.$isPushTokenReady
+            .filter { $0 } // Ждем когда станет true
+            .first()
+            .sink { _ in
+                print("✅ Push token is ready, sending config request...")
+                self.sendConfigRequest(conversionData: conversionData)
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func sendConfigRequest(conversionData: [String: Any]) {
+        configService.fetchConfig(
+            conversionData: conversionData,
+            appsflyerID: appState.appsflyerID,
+            pushToken: appState.pushToken
+        ) { result in
+            DispatchQueue.main.async {
+                self.isInitializing = false
+                
+                switch result {
+                case .success(let response):
+                    if let url = response.url, let expires = response.expires {
+                        self.appState.saveURL(url, expires: expires)
+                        self.appState.setAppMode(.webView)
+                        self.handleAppModeSet()
+                    } else {
+                        self.handleConfigError(.invalidResponse)
+                    }
+                    
+                case .failure(let error):
+                    self.handleConfigError(error)
+                }
+            }
+        }
+    }
+    
+    private func handleConfigError(_ error: ConfigError) {
+        switch error {
+        case .serverError(let code, _) where code == 404 || code >= 400:
+            appState.setAppMode(.game)
+            handleAppModeSet()
+            
+        case .noInternetConnection:
+            handleNoInternetConnection()
+            
+        default:
+            if let savedURL = appState.currentURL, !savedURL.isEmpty {
+                appState.setAppMode(.webView)
+                handleAppModeSet()
+            } else {
+                appState.setAppMode(.game)
+                handleAppModeSet()
+            }
+        }
+    }
+    
+    private func handleNoInternetConnection() {
+        if let savedURL = appState.currentURL, !savedURL.isEmpty {
+            appState.setAppMode(.webView)
+            handleAppModeSet()
+        } else {
+            appState.setAppMode(.game)
+            handleAppModeSet()
+        }
+    }
+    
+    private func handleAppModeSet() {
+        if appState.appMode == .webView && appState.shouldShowNotificationPermission() {
+            showNotificationPermission = true
+        }
+    }
+    
+    private func handleNotificationPermissionGranted() {
+        showNotificationPermission = false
+        // При согласии НЕ сохраняем отказ - пользователь может еще отказаться в системном диалоге
+        DispatchQueue.main.async {
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+    }
+    
+    private func handleNotificationPermissionSkipped() {
+        showNotificationPermission = false
+        // При отказе на кастомном экране - сохраняем дату для повтора через 3 дня
+        appState.saveNotificationPermissionDenied()
+    }
+    
+    private func handleAppDidBecomeActive() {
+        if appState.appMode == .webView && appState.isURLExpired() {
+            refreshWebViewURL()
+        }
+    }
+    
+    private func refreshWebViewURL() {
+        guard let conversionData = appState.conversionData else { return }
+        
+        configService.fetchConfig(
+            conversionData: conversionData,
+            appsflyerID: appState.appsflyerID,
+            pushToken: appState.pushToken
+        ) { result in
+            DispatchQueue.main.async {
+                switch result {
+                case .success(let response):
+                    if let url = response.url, let expires = response.expires {
+                        self.appState.saveURL(url, expires: expires)
+                    }
+                case .failure:
+                    break
+                }
+            }
+        }
+    }
 }
